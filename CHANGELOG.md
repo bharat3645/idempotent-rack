@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.0] - 2026-07-21
+
+### Added
+- `IdempotentRack::RedisStore` (optional dependency: the `redis` gem): a
+  Redis-backed store coordinating idempotency across processes *and hosts* -
+  the multi-server case neither `MemoryStore` (per-process) nor `FileStore`
+  (per-host) covers. `claim` and `complete!` each run as one atomic
+  server-side Lua script, so "exactly one concurrent claimant wins" holds
+  across every client and host talking to that Redis. TTL is a real Redis
+  key expiry.
+- `IdempotentRack::ActiveRecordStore` (optional dependency: `active_record`):
+  a database-backed store with the same cross-host guarantee, claimed
+  atomically via a unique index on the key - for teams already running a
+  database who'd rather not add Redis. Ships the migration in its header.
+
+Both are optional: `require "idempotent_rack"` still loads only the
+zero-dependency `MemoryStore`/`FileStore`; you require the Redis/AR store
+files explicitly. All four stores pass the same
+`IdempotentRack::StoreContract`.
+
+### Evidence
+- The optional stores are verified against real backends outside the
+  zero-gem CI: `RedisStore` (15 tests) against a live redis-server and
+  `ActiveRecordStore` (13 tests) against ActiveRecord 6.1 + SQLite, each
+  running the full shared contract including the 20-thread concurrency race
+  (real Lua-script atomicity / real unique-index write contention). The core
+  zero-gem suite (MemoryStore + FileStore + middleware, 40 tests) is
+  unchanged and still green.
+
 ## [0.2.0] - 2026-07-21
 
 ### Added
