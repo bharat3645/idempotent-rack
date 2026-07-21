@@ -95,6 +95,38 @@ A request with no `Idempotency-Key` header always passes straight
 through - this middleware never *requires* clients to send one, it only
 acts when they opt in.
 
+## Stores
+
+The middleware talks to a store through a tiny three-method contract
+(`claim` / `complete!` / `release!`, documented in
+`lib/idempotent_rack/store.rb`). Two are shipped, both zero-dependency:
+
+- **`MemoryStore`** (default) - an in-memory `Hash` + `Mutex`. Full
+  protection for a single multi-threaded process (one Puma worker with
+  threads); nothing is shared across processes.
+- **`FileStore`** - one small JSON file per key in a directory you choose,
+  coordinated with advisory `flock`. It survives a process restart and,
+  unlike `MemoryStore`, coordinates **multiple processes on one host**
+  (several Puma/Unicorn workers sharing a machine):
+
+  ```ruby
+  use IdempotentRack::Middleware,
+    store: IdempotentRack::FileStore.new(dir: "/var/lib/myapp/idempotency")
+  ```
+
+  Single host only: `flock` doesn't coordinate across machines, and network
+  filesystems implement it weakly - for multi-host, use a store backed by
+  something every host shares (Redis, the database).
+
+Writing your own store? `require "idempotent_rack/store_contract"` and
+`include IdempotentRack::StoreContract` in a `Minitest::Test` that defines
+`build_store(ttl:)` - you inherit the whole contract as executable tests
+(replay, 409-while-in-flight, 422-on-parameter-mismatch, crash-release, TTL
+expiry, and exactly-one-concurrent-winner), which are the subtle behaviours
+a from-scratch store is most likely to get wrong. It's exactly how
+`FileStore` is tested: the same suite as `MemoryStore`, so there's no
+parallel hand-written set to drift out of sync.
+
 ## Fingerprinting
 
 The fingerprint that detects key-reuse-with-different-parameters is
@@ -114,8 +146,9 @@ body on the same path or the same body sent to a different path.
   real concurrency test (see below). Cross-process protection needs a
   shared store (Redis, the database) implementing `Store`'s contract -
   see `lib/idempotent_rack/store.rb`'s module doc for exactly what that
-  requires; shipping one is a roadmap item, not done here, so as not to
-  add a Redis dependency to a zero-dependency v0.1.
+  requires. The shipped **`FileStore`** already covers the multi-process,
+  single-host case with zero dependencies (see "Stores" above); a
+  Redis/database-backed store for the multi-*host* case is a roadmap item.
 - **Fingerprint is method + path + body, not headers.** Two requests
   that differ only in, say, an `Authorization` header but are otherwise
   identical are treated as the same request. This matches the common
@@ -130,11 +163,15 @@ body on the same path or the same body sent to a different path.
 
 ## Roadmap
 
-- A store contract test suite any custom `Store` implementation can run
-  against itself, to check it actually satisfies the contract
-- A Redis-backed store (cross-process/cross-host guarantees)
+- ~~A store contract test suite any custom `Store` implementation can run
+  against itself~~ - **shipped in 0.2.0** as `IdempotentRack::StoreContract`
+  (see "Stores").
+- ~~A store beyond in-memory~~ - **`FileStore` shipped in 0.2.0**
+  (persistent, multi-process on a single host).
+- A Redis-backed store for cross-*host* guarantees - the `StoreContract`
+  above is there to validate it against the same suite the shipped stores pass.
 - An ActiveRecord-backed store for Rails apps that would rather not add
-  Redis just for this
+  Redis just for this.
 
 ## Development
 
@@ -144,10 +181,12 @@ ruby -Ilib -Itest test/middleware_test.rb
 gem build idempotent_rack.gemspec
 ```
 
-24 tests, 42 assertions, including a real multi-thread concurrency test
-(20 threads racing to claim the same fresh key - exactly one must win)
-and a crash-recovery test (the app raising must release the key so a
-retry isn't stuck behind a permanent `409`).
+40 tests, 65 assertions, including the shared store contract run against
+**both** `MemoryStore` and `FileStore` (each with a real 20-thread race
+asserting exactly one claimant wins), FileStore persistence across separate
+store instances over one directory, corrupt-file recovery, and a
+crash-recovery test (the app raising must release the key so a retry isn't
+stuck behind a permanent `409`).
 
 ## Related projects by the same author
 
