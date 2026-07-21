@@ -99,7 +99,9 @@ acts when they opt in.
 
 The middleware talks to a store through a tiny three-method contract
 (`claim` / `complete!` / `release!`, documented in
-`lib/idempotent_rack/store.rb`). Two are shipped, both zero-dependency:
+`lib/idempotent_rack/store.rb`). Four ship. Two are zero-dependency and load
+with the gem; two are optional-dependency (require the file explicitly), for
+coordination across **hosts**:
 
 - **`MemoryStore`** (default) - an in-memory `Hash` + `Mutex`. Full
   protection for a single multi-threaded process (one Puma worker with
@@ -116,7 +118,25 @@ The middleware talks to a store through a tiny three-method contract
 
   Single host only: `flock` doesn't coordinate across machines, and network
   filesystems implement it weakly - for multi-host, use a store backed by
-  something every host shares (Redis, the database).
+  something every host shares (Redis, the database):
+- **`RedisStore`** (optional: `require "idempotent_rack/redis_store"`, needs
+  the `redis` gem) - one hash per key in a shared Redis, claimed with an
+  atomic server-side Lua script. Coordinates across **processes and hosts** -
+  the case a load-balanced multi-server deployment actually needs. TTL is a
+  real Redis key expiry. Pass your own client:
+
+  ```ruby
+  require "idempotent_rack/redis_store"
+  use IdempotentRack::Middleware,
+    store: IdempotentRack::RedisStore.new(redis: Redis.new(url: ENV["REDIS_URL"]))
+  ```
+
+- **`ActiveRecordStore`** (optional: `require "idempotent_rack/active_record_store"`,
+  needs `active_record`) - a row per key in a table you migrate, claimed
+  atomically via a unique index. Same cross-host guarantee as Redis, for
+  teams who'd rather not add Redis when they already run a database. The
+  migration and usage are in the file's header comment
+  (`lib/idempotent_rack/active_record_store.rb`).
 
 Writing your own store? `require "idempotent_rack/store_contract"` and
 `include IdempotentRack::StoreContract` in a `Minitest::Test` that defines
@@ -146,9 +166,9 @@ body on the same path or the same body sent to a different path.
   real concurrency test (see below). Cross-process protection needs a
   shared store (Redis, the database) implementing `Store`'s contract -
   see `lib/idempotent_rack/store.rb`'s module doc for exactly what that
-  requires. The shipped **`FileStore`** already covers the multi-process,
-  single-host case with zero dependencies (see "Stores" above); a
-  Redis/database-backed store for the multi-*host* case is a roadmap item.
+  requires. The shipped **`FileStore`** covers the multi-process,
+  single-host case with zero dependencies; **`RedisStore`** and
+  **`ActiveRecordStore`** cover the multi-*host* case (see "Stores" above).
 - **Fingerprint is method + path + body, not headers.** Two requests
   that differ only in, say, an `Authorization` header but are otherwise
   identical are treated as the same request. This matches the common
@@ -163,30 +183,40 @@ body on the same path or the same body sent to a different path.
 
 ## Roadmap
 
-- ~~A store contract test suite any custom `Store` implementation can run
-  against itself~~ - **shipped in 0.2.0** as `IdempotentRack::StoreContract`
-  (see "Stores").
-- ~~A store beyond in-memory~~ - **`FileStore` shipped in 0.2.0**
-  (persistent, multi-process on a single host).
-- A Redis-backed store for cross-*host* guarantees - the `StoreContract`
-  above is there to validate it against the same suite the shipped stores pass.
-- An ActiveRecord-backed store for Rails apps that would rather not add
-  Redis just for this.
+Every store the roadmap called for now ships, all four passing the same
+`StoreContract`:
+
+- ~~A store contract test suite~~ - **0.2.0**, `IdempotentRack::StoreContract`.
+- ~~A store beyond in-memory~~ - **`FileStore`, 0.2.0** (persistent, single host).
+- ~~A Redis-backed store for cross-host guarantees~~ - **`RedisStore`, 0.3.0**.
+- ~~An ActiveRecord-backed store~~ - **`ActiveRecordStore`, 0.3.0**.
+
+The two optional-dependency stores are verified against a real redis-server
+and a real ActiveRecord/SQLite database (see Development). Next candidates,
+if wanted: a pluggable key-scoping hook, and `tools_lock`-style config.
 
 ## Development
 
 ```sh
-ruby -Ilib -Itest test/store_test.rb
+# Core suite - zero gems installed, exactly what CI runs:
+ruby -Ilib -Itest test/store_test.rb        # MemoryStore + FileStore
 ruby -Ilib -Itest test/middleware_test.rb
 gem build idempotent_rack.gemspec
+
+# Optional stores - need the backend + its gem, so they run outside the
+# zero-gem CI (they skip cleanly if the backend is absent):
+ruby -Ilib -Itest test/redis_store_test.rb          # needs the redis gem + a redis-server
+ruby -Ilib -Itest test/active_record_store_test.rb  # needs activerecord + sqlite3
 ```
 
-40 tests, 65 assertions, including the shared store contract run against
-**both** `MemoryStore` and `FileStore` (each with a real 20-thread race
-asserting exactly one claimant wins), FileStore persistence across separate
-store instances over one directory, corrupt-file recovery, and a
-crash-recovery test (the app raising must release the key so a retry isn't
-stuck behind a permanent `409`).
+The core suite is **40 tests / 65 assertions** (MemoryStore + FileStore
+through the shared contract - each with a real 20-thread race asserting
+exactly one claimant wins - plus FileStore persistence/corrupt-recovery and
+the middleware). Each optional store runs that *same* `StoreContract`
+against its real backend - **`RedisStore` (15 tests)** against a live
+redis-server and **`ActiveRecordStore` (13 tests)** against ActiveRecord +
+SQLite - so all four stores are proven against one contract, not four
+hand-written sets that could drift.
 
 ## Related projects by the same author
 
