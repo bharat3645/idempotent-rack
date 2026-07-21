@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.0] - 2026-07-21
+
+### Added
+- `IdempotentRack::FileStore`: a zero-dependency, filesystem-backed store -
+  one small JSON file per key, coordinated with advisory `flock`. Unlike the
+  in-memory default it survives a process restart and coordinates multiple
+  processes on a single host (several Puma/Unicorn workers sharing a
+  machine). Documented single-host only (`flock` doesn't span machines, and
+  network filesystems implement it weakly); multi-host still wants a
+  Redis/database store. Keys are SHA-256-hashed into filenames, so a key can
+  never escape the store directory.
+- `IdempotentRack::StoreContract`: a reusable Minitest module that turns the
+  `Store` contract into executable tests. `include` it and define
+  `build_store(ttl:)` to validate any custom store (Redis, ActiveRecord, ...)
+  against the exact suite `MemoryStore` and `FileStore` pass - replay,
+  `409`-in-flight, `422`-parameter-mismatch, crash-release, TTL expiry, and
+  exactly-one-concurrent-winner. Not required at runtime (it's a test
+  helper), so the gem stays zero-dependency.
+
+### Evidence
+- 40 tests / 65 assertions, zero gems installed. The contract runs against
+  both shipped stores from one module (no drift between a store and its
+  tests); FileStore adds cross-instance-persistence, corrupt-file-recovery,
+  and path-traversal-safe-filename tests. `gem build` clean at 0.2.0.
+
 ## [0.1.0] - 2026-07-21
 
 Initial release.
