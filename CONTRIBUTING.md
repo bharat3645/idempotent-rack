@@ -11,7 +11,7 @@ Thanks for looking under the hood. This project values small, verifiable changes
 ## Getting started
 
 ```sh
-ruby -Ilib -Itest test/store_test.rb && ruby -Ilib -Itest test/middleware_test.rb      # e.g. go test -race ./...  |  node --test test/*.test.js  |  python -m unittest
+ruby -Ilib -Itest test/store_test.rb && ruby -Ilib -Itest test/middleware_test.rb
 ```
 
 Run with no gems installed and without `bundle exec` — that's the point, it keeps the zero-dependency claim honest.
