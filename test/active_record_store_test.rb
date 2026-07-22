@@ -18,7 +18,14 @@ end
 
 module ARStoreTestSetup
   def setup
-    skip "activerecord/sqlite3 not installed" unless ACTIVE_RECORD_LOADED
+    # See redis_store_test.rb: IDR_REQUIRE_BACKENDS (set by the CI activerecord
+    # job) turns a missing gem into a hard failure so the job can't go green
+    # having silently skipped every test. Locally it still skips cleanly.
+    unless ACTIVE_RECORD_LOADED
+      raise "IDR_REQUIRE_BACKENDS is set but activerecord/sqlite3 is not installed" if ENV["IDR_REQUIRE_BACKENDS"]
+
+      skip "activerecord/sqlite3 not installed"
+    end
 
     @dir = Dir.mktmpdir("idr-ar")
     # A file-based DB (not :memory:, which is per-connection) with WAL +

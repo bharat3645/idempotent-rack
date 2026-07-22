@@ -20,14 +20,32 @@ zero-dependency `MemoryStore`/`FileStore`; you require the Redis/AR store
 files explicitly. All four stores pass the same
 `IdempotentRack::StoreContract`.
 
+### Fixed
+- `FileStore` no longer races Ruby's `Digest::SHA256` autoload under
+  concurrency. `require "digest"` only registers an autoload for the SHA-2
+  classes; on Ruby 3.0 that lazy load is not thread-safe, so a burst of
+  concurrent claims on fresh keys (the 20-thread contract test, or a
+  real-world request burst) could raise
+  `Digest::Base cannot be directly inherited in Ruby`. `file_store.rb` now
+  loads `digest/sha2` eagerly at require time, single-threaded, so the class
+  is fully defined before any request thread runs. Only Ruby 3.0 was
+  affected; later versions load it thread-safely.
+
+### CI
+- The optional stores now run in CI against real backends, not just locally:
+  a `redis:7` service-container job for `RedisStore` and an ActiveRecord +
+  SQLite job for `ActiveRecordStore`, each running the full shared contract
+  (including the 20-thread race) with `IDR_REQUIRE_BACKENDS=1` so a missing
+  gem or unreachable service fails the job rather than skipping silently.
+
 ### Evidence
-- The optional stores are verified against real backends outside the
-  zero-gem CI: `RedisStore` (15 tests) against a live redis-server and
-  `ActiveRecordStore` (13 tests) against ActiveRecord 6.1 + SQLite, each
-  running the full shared contract including the 20-thread concurrency race
-  (real Lua-script atomicity / real unique-index write contention). The core
-  zero-gem suite (MemoryStore + FileStore + middleware, 40 tests) is
-  unchanged and still green.
+- The optional stores are verified against real backends: `RedisStore` (15
+  tests) against a live redis-server and `ActiveRecordStore` (13 tests)
+  against ActiveRecord + SQLite, each running the full shared contract
+  including the 20-thread concurrency race (real Lua-script atomicity / real
+  unique-index write contention). The core zero-gem suite (MemoryStore +
+  FileStore + middleware, 40 tests) is unchanged and green across the full
+  Ruby 3.0-3.4 matrix.
 
 ## [0.2.0] - 2026-07-21
 

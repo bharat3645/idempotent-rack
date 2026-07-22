@@ -23,6 +23,50 @@ jobs:
           ruby -Ilib -Itest test/store_test.rb
           ruby -Ilib -Itest test/middleware_test.rb
 
+  # The core matrix above installs zero gems, so it can only exercise
+  # MemoryStore + FileStore. The two optional cross-host backends ship their
+  # own real integration tests (against a real Redis / a real ActiveRecord +
+  # SQLite), which need those gems and a live service - run here. Both set
+  # IDR_REQUIRE_BACKENDS so a missing gem or unreachable service fails the job
+  # instead of silently skipping every test.
+  redis-store:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Install the optional redis gem
+        run: gem install redis --no-document
+      - name: RedisStore integration tests (real Redis)
+        env:
+          IDR_REQUIRE_BACKENDS: "1"
+        run: ruby -Ilib -Itest test/redis_store_test.rb
+
+  activerecord-store:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Install the optional activerecord + sqlite3 gems
+        run: gem install activerecord sqlite3 --no-document
+      - name: ActiveRecordStore integration tests (real ActiveRecord + SQLite)
+        env:
+          IDR_REQUIRE_BACKENDS: "1"
+        run: ruby -Ilib -Itest test/active_record_store_test.rb
+
   gem:
     runs-on: ubuntu-latest
     steps:

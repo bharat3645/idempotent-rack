@@ -18,12 +18,23 @@ end
 # A dedicated logical DB so the suite never touches real application data.
 REDIS_TEST_DB = 15
 
+# When IDR_REQUIRE_BACKENDS is set (the CI redis job sets it), a missing gem
+# or an unreachable server is a hard FAILURE, not a skip - otherwise a
+# misconfigured CI job would go green having silently run nothing, which is
+# exactly the "green that doesn't mean anything" this suite exists to prevent.
+# Locally, with no server up, it still skips cleanly.
 def a_redis_or_skip(test)
-  test.skip("redis gem not installed") unless REDIS_LOADED
+  unless REDIS_LOADED
+    raise "IDR_REQUIRE_BACKENDS is set but the redis gem is not installed" if ENV["IDR_REQUIRE_BACKENDS"]
+
+    test.skip("redis gem not installed")
+  end
   r = Redis.new(db: REDIS_TEST_DB)
   r.ping
   r
 rescue StandardError => e
+  raise if ENV["IDR_REQUIRE_BACKENDS"]
+
   test.skip("redis-server not reachable (#{e.class})")
 end
 

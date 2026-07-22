@@ -1,6 +1,15 @@
 # frozen_string_literal: true
 
 require "digest"
+# Eagerly load the SHA-2 implementation, single-threaded, at require time.
+# `require "digest"` alone only registers an AUTOLOAD for Digest::SHA256; the
+# first reference triggers `require "digest/sha2"` lazily. On Ruby 3.0 that
+# lazy require is not thread-safe: a burst of concurrent claims on fresh keys
+# (each calling Digest::SHA256.hexdigest in #path_for before any digest was
+# ever computed) can race the autoload and raise
+# "Digest::Base cannot be directly inherited in Ruby". Loading it here, now,
+# means the class is fully defined before any request thread runs.
+require "digest/sha2"
 require "json"
 require "fileutils"
 

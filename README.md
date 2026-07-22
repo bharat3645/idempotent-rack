@@ -198,16 +198,23 @@ if wanted: a pluggable key-scoping hook, and `tools_lock`-style config.
 ## Development
 
 ```sh
-# Core suite - zero gems installed, exactly what CI runs:
+# Core suite - zero gems installed, run on the full Ruby 3.0-3.4 CI matrix:
 ruby -Ilib -Itest test/store_test.rb        # MemoryStore + FileStore
 ruby -Ilib -Itest test/middleware_test.rb
 gem build idempotent_rack.gemspec
 
-# Optional stores - need the backend + its gem, so they run outside the
-# zero-gem CI (they skip cleanly if the backend is absent):
+# Optional stores - need the backend + its gem. They skip cleanly if the
+# backend is absent, so they're safe to run anywhere:
 ruby -Ilib -Itest test/redis_store_test.rb          # needs the redis gem + a redis-server
 ruby -Ilib -Itest test/active_record_store_test.rb  # needs activerecord + sqlite3
 ```
+
+CI runs all of it: the zero-gem core suite across the Ruby 3.0-3.4 matrix,
+plus two dedicated jobs that run the optional stores against a real backend -
+`RedisStore` against a `redis:7` service container, `ActiveRecordStore`
+against ActiveRecord + SQLite. Those jobs set `IDR_REQUIRE_BACKENDS=1`, which
+turns a missing gem or unreachable service into a hard failure instead of a
+skip, so a backend job can't go green having silently run nothing.
 
 The core suite is **40 tests / 65 assertions** (MemoryStore + FileStore
 through the shared contract - each with a real 20-thread race asserting
