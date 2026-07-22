@@ -1,5 +1,7 @@
 # idempotent_rack
 
+[![CI](https://github.com/bharat3645/idempotent-rack/actions/workflows/ci.yml/badge.svg)](https://github.com/bharat3645/idempotent-rack/actions/workflows/ci.yml)
+
 Idempotency-Key middleware for Rack and Rails APIs. A client retry after a
 dropped connection (or a double-click, or a naive retry loop) replays the
 first request's actual response instead of re-running it - the standard
