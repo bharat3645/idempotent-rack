@@ -1,0 +1,5 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1786994981, "env": {"SHELL": "/bin/bash", "TERM": "linux"}, "title": "idempotent_rack: replay, conflict, and a real concurrent race"}
+[0.007706, "o", "$ ruby -Ilib demo_script.rb\r\n"]
+[0.689171, "o", "First request:\r\n  [app executing for real] body=\"{\\\"amount\\\":4200}\"\r\n  -> status=201 replayed=nil body={\"charge_id\":\"ch_599\",\"amount\":4200}\r\nClient retries with the SAME key (e.g. connection dropped, naive retry):\r\n"]
+[0.689248, "o", "  -> status=201 replayed=\"true\" body={\"charge_id\":\"ch_599\",\"amount\":4200}\r\nA different request reuses the key with a DIFFERENT body:\r\n  -> status=422 replayed=nil body={\"error\":{\"code\":\"idempotency_key_conflict\",\"message\":\"Idempotency-Key \\\"req_a1b2c3\\\" was already used with different request parameters\"}}\r\nTwo concurrent requests with a NEW key, racing each other:\r\n"]
+[0.890288, "o", "  -> statuses seen: [201, 409] (one 201, one 409 - only one execution wins the claim)\r\n"]
