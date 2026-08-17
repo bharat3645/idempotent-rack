@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Demo recording** (`demo/idempotent-rack-demo.cast`, linked from the README): a real asciinema terminal session - the Quickstart's first-request/retry/conflict sequence, plus a real concurrent-duplicate race (two threads, one new key, a deliberately slow app) showing one request win with `201` and the other lose with `409` before the first has even finished. Recorded against the real middleware, replayed to confirm before committing.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

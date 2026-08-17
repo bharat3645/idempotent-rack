@@ -84,6 +84,20 @@ Note the retry line has no `[app executing for real]` output before it -
 the app genuinely did not run a second time, it's not just returning an
 equal-looking response.
 
+## Demo
+
+A real terminal recording of the flow above, plus the concurrent-duplicate
+case the Quickstart doesn't show: two real threads racing the *same* new
+key against a deliberately slow app - one wins the claim and gets `201`,
+the other gets `409` before the first has even finished:
+
+```bash
+asciinema play demo/idempotent-rack-demo.cast
+```
+
+(local playback - [install asciinema](https://asciinema.org/docs/installation)
+if you don't have it; no account/upload needed.)
+
 ## Options
 
 ```ruby
