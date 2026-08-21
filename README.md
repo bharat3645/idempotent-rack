@@ -98,6 +98,14 @@ asciinema play demo/idempotent-rack-demo.cast
 (local playback - [install asciinema](https://asciinema.org/docs/installation)
 if you don't have it; no account/upload needed.)
 
+The recording is reproducible, not just watchable - `demo/demo_script.rb`
+drives the exact same scenario against the real middleware and a plain
+Rack env (no gems, no Rails):
+
+```bash
+ruby -Ilib demo/demo_script.rb
+```
+
 ## Options
 
 ```ruby
