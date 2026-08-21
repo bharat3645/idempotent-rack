@@ -1,4 +1,3 @@
-
 # frozen_string_literal: true
 
 # Drives the exact scenario recorded in demo/idempotent-rack-demo.cast, so
