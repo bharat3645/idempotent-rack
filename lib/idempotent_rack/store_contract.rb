@@ -97,6 +97,20 @@ module IdempotentRack
       assert_equal [200, {}, ["one"]], store.claim("k1", "fp-a")
     end
 
+    def test_contract_completed_claim_replays_a_binary_non_utf8_response_body
+      store = build_store
+      store.claim("k1", "fp-a")
+      # A real-world binary body (a JPEG header, here) - not valid UTF-8. Any
+      # store that round-trips a response through JSON.generate/JSON.parse
+      # without encoding it first raises JSON::GeneratorError on `complete!`,
+      # which would otherwise surface as the client getting an unhandled
+      # exception for a request the app already handled successfully.
+      binary_chunk = (+"\xFF\xD8\xFF\xE0binarydata").force_encoding(Encoding::ASCII_8BIT)
+      response = [200, { "Content-Type" => "application/octet-stream" }, [binary_chunk]]
+      store.complete!("k1", response)
+      assert_equal response, store.claim("k1", "fp-a")
+    end
+
     def test_contract_concurrent_claims_on_same_fresh_key_let_exactly_one_through
       store = build_store
       winners = Queue.new

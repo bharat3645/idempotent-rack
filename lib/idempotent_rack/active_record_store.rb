@@ -2,6 +2,7 @@
 
 require "active_record"
 require "json"
+require_relative "response_codec"
 
 module IdempotentRack
   # ActiveRecord-backed idempotency store: the same Store::CONTRACT as
@@ -74,7 +75,7 @@ module IdempotentRack
       when "in_progress"
         raise KeyInUseError, "a request with Idempotency-Key #{key.inspect} is already being processed"
       when "completed"
-        JSON.parse(row.response)
+        ResponseCodec.load(row.response)
       end
     end
 
@@ -82,8 +83,11 @@ module IdempotentRack
       # update_all: a single UPDATE, no row load, and it leaves expires_at
       # untouched (keeping the deadline set at claim time). A key that's gone
       # (released/expired-away) updates zero rows - a harmless noop, like
-      # MemoryStore's `return unless entry`.
-      @model.where(idempotency_key: key).update_all(status: "completed", response: JSON.generate(response))
+      # MemoryStore's `return unless entry`. Stored Base64-encoded via
+      # ResponseCodec, not JSON.generate(response) directly - a binary
+      # response body otherwise raises JSON::GeneratorError on the first
+      # non-UTF-8 byte (see response_codec.rb).
+      @model.where(idempotency_key: key).update_all(status: "completed", response: ResponseCodec.dump(response))
       nil
     end
 

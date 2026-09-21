@@ -12,6 +12,7 @@ require "digest"
 require "digest/sha2"
 require "json"
 require "fileutils"
+require_relative "response_codec"
 
 module IdempotentRack
   # Filesystem-backed idempotency store: the same Store::CONTRACT as
@@ -69,7 +70,7 @@ module IdempotentRack
         when "in_progress"
           raise KeyInUseError, "a request with Idempotency-Key #{key.inspect} is already being processed"
         when "completed"
-          entry["response"]
+          ResponseCodec.load(entry["response"])
         end
       end
     end
@@ -84,7 +85,10 @@ module IdempotentRack
         return if entry.nil? # released/expired away concurrently; nothing to complete
 
         entry["status"] = "completed"
-        entry["response"] = response
+        # Base64-encoded via ResponseCodec, not the raw [status, headers,
+        # body] array - a binary response body would otherwise crash the
+        # JSON.generate in write_entry (see response_codec.rb).
+        entry["response"] = ResponseCodec.dump(response)
         write_entry(f, entry) # keeps the original expires_at set at claim time
       end
     rescue Errno::ENOENT

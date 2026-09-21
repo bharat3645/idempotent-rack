@@ -2,6 +2,7 @@
 
 require "redis"
 require "json"
+require_relative "response_codec"
 
 module IdempotentRack
   # Redis-backed idempotency store: the same Store::CONTRACT as MemoryStore
@@ -27,8 +28,8 @@ module IdempotentRack
   # client and host talking to that Redis, not just within one process.
   class RedisStore
     # Atomic claim. KEYS[1] = namespaced redis key. ARGV[1] = fingerprint,
-    # ARGV[2] = ttl seconds. Returns {"fresh"} | {"conflict"} | {"in_use"} |
-    # {"completed", <response json>}. A ttl <= 0 makes EXPIRE delete the key
+    # ARGV[2] = ttl seconds. Returns {'fresh'} | {'conflict'} | {'in_use'} |
+    # {'completed', <response json>}. A ttl <= 0 makes EXPIRE delete the key
     # immediately, so an already-expired claim behaves as fresh - matching
     # MemoryStore's ttl semantics.
     CLAIM_SCRIPT = <<~LUA
@@ -74,12 +75,16 @@ module IdempotentRack
       when "in_use"
         raise KeyInUseError, "a request with Idempotency-Key #{key.inspect} is already being processed"
       when "completed"
-        JSON.parse(response)
+        ResponseCodec.load(response)
       end
     end
 
     def complete!(key, response)
-      @redis.eval(COMPLETE_SCRIPT, keys: [rkey(key)], argv: [JSON.generate(response)])
+      # Base64-encoded via ResponseCodec, not JSON.generate(response)
+      # directly - a binary response body otherwise raises
+      # JSON::GeneratorError on the first non-UTF-8 byte (see
+      # response_codec.rb).
+      @redis.eval(COMPLETE_SCRIPT, keys: [rkey(key)], argv: [ResponseCodec.dump(response)])
       nil
     end
 
