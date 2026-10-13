@@ -56,18 +56,27 @@ module IdempotentRack
       buffered = []
       body_enum.each { |chunk| buffered << chunk }
       body_enum.close if body_enum.respond_to?(:close)
-
-      response = [status, headers, buffered]
-      @store.complete!(key, response)
-      response
     rescue StandardError
       # The app blew up before producing a response at all - free the key
       # so a retry gets a real chance instead of a permanent 409. A
       # request that completes (even with a 4xx/5xx *response*) is still
-      # cached above, matching Stripe's documented behavior of caching
-      # failures too - only an unhandled exception releases the key.
+      # cached below, matching Stripe's documented behavior of caching
+      # failures too - only an unhandled exception from the app itself
+      # releases the key.
       @store.release!(key)
       raise
+    else
+      # Deliberately outside the rescue above: by this point the real app
+      # already ran and produced this response. If @store.complete! itself
+      # fails (store down, disk full, ...), releasing the key here would
+      # let a retry silently re-run the already-executed app - exactly the
+      # double side effect (double charge, double webhook, ...) this
+      # middleware exists to prevent. So this is left unrescued: the error
+      # propagates with the key still in_progress, and a retry gets 409
+      # instead of a second real execution.
+      response = [status, headers, buffered]
+      @store.complete!(key, response)
+      response
     end
 
     def replay_response(response)

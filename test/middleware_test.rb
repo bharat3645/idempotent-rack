@@ -126,4 +126,33 @@ class MiddlewareTest < Minitest::Test
     mw.call(rack_env(headers: { "Idempotency-Key" => "k1" }))
     assert_equal 1, custom_store.size
   end
+
+  # A store whose complete! fails simulates a real-world transient
+  # failure (Redis connection drop, DB disconnect, full disk) that happens
+  # AFTER the real app has already run and produced a response.
+  class CompleteFailsStore < IdempotentRack::MemoryStore
+    def complete!(_key, _response)
+      raise "store unavailable"
+    end
+  end
+
+  def test_a_store_error_while_caching_the_response_does_not_release_the_key
+    store = CompleteFailsStore.new
+    mw = IdempotentRack::Middleware.new(@app, store: store)
+
+    assert_raises(RuntimeError) { mw.call(rack_env(headers: { "Idempotency-Key" => "k1" })) }
+    assert_equal 1, @app.call_count, "the app already ran once for this key"
+
+    # The store never recorded completion, but the app DID already run and
+    # (in a real app) may have already charged a card or sent a webhook.
+    # A retry must not be allowed to silently re-run it: the key must stay
+    # claimed (in_progress), so the retry gets 409, not a second real
+    # execution of the app.
+    status, _headers, body = mw.call(rack_env(headers: { "Idempotency-Key" => "k1" }))
+    assert_equal 409, status
+    parsed = JSON.parse(body.first)
+    assert_equal "idempotency_key_in_use", parsed["error"]["code"]
+    assert_equal 1, @app.call_count, "a retry must never re-run an app call that already completed, " \
+                                      "even if the store failed to cache the result"
+  end
 end
