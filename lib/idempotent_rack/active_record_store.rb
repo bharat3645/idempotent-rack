@@ -56,27 +56,7 @@ module IdempotentRack
                      status: "in_progress", response: nil, expires_at: now + @ttl)
       :fresh
     rescue ActiveRecord::RecordNotUnique
-      row = @model.find_by(idempotency_key: key)
-      # The row was released between our failed INSERT and this read - retry
-      # as a genuinely fresh claim (terminates: someone would have to keep
-      # deleting it, which the middleware never does mid-claim).
-      return claim(key, fingerprint) if row.nil?
-
-      if expired?(row, now)
-        row.update!(fingerprint: fingerprint, status: "in_progress", response: nil, expires_at: now + @ttl)
-        return :fresh
-      end
-
-      if row.fingerprint != fingerprint
-        raise KeyConflictError, "Idempotency-Key #{key.inspect} was already used with different request parameters"
-      end
-
-      case row.status
-      when "in_progress"
-        raise KeyInUseError, "a request with Idempotency-Key #{key.inspect} is already being processed"
-      when "completed"
-        ResponseCodec.load(row.response)
-      end
+      claim_existing(key, fingerprint, now)
     end
 
     def complete!(key, response)
@@ -104,8 +84,43 @@ module IdempotentRack
 
     private
 
-    def expired?(row, now = Time.now.to_f)
-      row.expires_at.to_f < now
+    # Takes over an existing row after our INSERT lost to the unique index.
+    # The expired-key reclaim is a single conditional UPDATE, not a
+    # find_by-then-update! read-then-write: `find_by` followed by `row.update!`
+    # has no WHERE guard against the row having changed between the read and
+    # the write, so several concurrent claimants who all read the same
+    # expired snapshot would all see `expired?` true and all call
+    # `row.update!` - a blind write with no current-state check - and every
+    # one of them would get :fresh, each believing it alone won the key.
+    # That breaks the exact guarantee this store exists to provide: it lets
+    # the real app run concurrently more than once for one idempotency key.
+    # This UPDATE only affects a row that is STILL expired at the moment it
+    # runs, so the first claimant to commit changes expires_at to the
+    # future and every other concurrent claimant's WHERE no longer matches -
+    # exactly one of them gets :fresh, the same guarantee the unique index
+    # already gives the brand-new-key path above.
+    def claim_existing(key, fingerprint, now)
+      claimed = @model.where(idempotency_key: key).where("expires_at < ?", now)
+                       .update_all(fingerprint: fingerprint, status: "in_progress",
+                                   response: nil, expires_at: now + @ttl)
+      return :fresh if claimed == 1
+
+      row = @model.find_by(idempotency_key: key)
+      # The row was released between our failed INSERT and this read - retry
+      # as a genuinely fresh claim (terminates: someone would have to keep
+      # deleting it, which the middleware never does mid-claim).
+      return claim(key, fingerprint) if row.nil?
+
+      if row.fingerprint != fingerprint
+        raise KeyConflictError, "Idempotency-Key #{key.inspect} was already used with different request parameters"
+      end
+
+      case row.status
+      when "in_progress"
+        raise KeyInUseError, "a request with Idempotency-Key #{key.inspect} is already being processed"
+      when "completed"
+        ResponseCodec.load(row.response)
+      end
     end
   end
 end

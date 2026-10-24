@@ -92,4 +92,102 @@ class ActiveRecordStoreSpecificTest < Minitest::Test
     store.release!("k1")
     assert_equal 0, store.size
   end
+
+  # Real concurrency across 40 threads racing to reclaim the same expired
+  # key passes without a forced interleaving (see below for why a forced
+  # one is also needed to pin the specific bug this guards against).
+  def test_many_concurrent_claimants_on_the_same_expired_key_let_exactly_one_through
+    store = IdempotentRack::ActiveRecordStore.new
+    model = IdempotentRack::ActiveRecordStore.model_for("idempotency_keys")
+    model.create!(idempotency_key: "race-key", fingerprint: "fp-a", status: "completed",
+                   response: IdempotentRack::ResponseCodec.dump([200, {}, ["old"]]),
+                   expires_at: Time.now.to_f - 10)
+
+    fresh_count = 0
+    mutex = Mutex.new
+    go_queue = Queue.new
+    go = false
+    threads = 40.times.map do
+      Thread.new do
+        go_queue << true
+        sleep 0.0001 until go
+        begin
+          result = store.claim("race-key", "fp-a")
+          mutex.synchronize { fresh_count += 1 } if result == :fresh
+        rescue IdempotentRack::KeyInUseError, IdempotentRack::KeyConflictError
+          # expected for every losing claimant
+        end
+      end
+    end
+    40.times { go_queue.pop }
+    go = true
+    threads.each(&:join)
+
+    assert_equal 1, fresh_count, "exactly one concurrent claimant on an expired key should get :fresh"
+  end
+
+  # The test above can pass "by luck" on a fast local SQLite file even
+  # against a buggy find_by-then-row.update! implementation, because the
+  # gap between the read and the write is only microseconds - too short to
+  # reliably interleave real OS threads. This test forces that interleaving
+  # deterministically (modeling the wider gap a real network round trip to
+  # a remote Postgres/MySQL would give): every concurrent claimant is made
+  # to finish issuing its first SQL statement against this table before any
+  # of them is allowed to issue an UPDATE against it. The barrier sits at
+  # the SQL-execution layer (not a specific Ruby method name) so it proves
+  # the property that actually matters - whichever statement makes this
+  # key's reclaim atomic re-checks the row's current state at write time -
+  # rather than assuming a particular method is the one doing it.
+  def test_forced_interleaving_on_an_expired_key_still_lets_only_one_winner_through
+    model = IdempotentRack::ActiveRecordStore.model_for("idempotency_keys")
+    model.create!(idempotency_key: "race-key", fingerprint: "fp-a", status: "completed",
+                   response: IdempotentRack::ResponseCodec.dump([200, {}, ["old"]]),
+                   expires_at: Time.now.to_f - 10)
+    store = IdempotentRack::ActiveRecordStore.new
+
+    n = 8
+    active = true
+    barrier_count = 0
+    barrier_mutex = Mutex.new
+    barrier_cv = ConditionVariable.new
+    seen_threads = {}
+    adapter_class = ActiveRecord::Base.connection.class
+    barrier_module = Module.new do
+      define_method(:raw_execute) do |sql, *rest, **kwargs|
+        if active && sql.include?("idempotency_keys") && sql.match?(/\AUPDATE/i) && !seen_threads[Thread.current.object_id]
+          seen_threads[Thread.current.object_id] = true
+          barrier_mutex.synchronize do
+            barrier_count += 1
+            barrier_count >= n ? barrier_cv.broadcast : barrier_cv.wait(barrier_mutex)
+          end
+        end
+        super(sql, *rest, **kwargs)
+      end
+    end
+    adapter_class.prepend(barrier_module)
+
+    fresh_count = 0
+    mutex = Mutex.new
+    threads = n.times.map do
+      Thread.new do
+        begin
+          result = store.claim("race-key", "fp-a")
+          mutex.synchronize { fresh_count += 1 } if result == :fresh
+        rescue IdempotentRack::KeyInUseError, IdempotentRack::KeyConflictError
+          # expected for every losing claimant
+        end
+      end
+    end
+    threads.each(&:join)
+
+    assert_equal 1, fresh_count,
+      "forcing every claimant's first write to line up together should still let only one win"
+  ensure
+    # Permanently prepended for the process (Ruby has no clean "unprepend"),
+    # but disarmed via the closure flag so it's a no-op super-call pass-
+    # through for every other test in this run - each test file is its own
+    # process in CI/CONTRIBUTING.md's `ruby -Ilib -Itest ...` invocation, so
+    # this never leaks across files either way.
+    active = false
+  end
 end
