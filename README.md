@@ -240,13 +240,13 @@ against ActiveRecord + SQLite. Those jobs set `IDR_REQUIRE_BACKENDS=1`, which
 turns a missing gem or unreachable service into a hard failure instead of a
 skip, so a backend job can't go green having silently run nothing.
 
-The core suite is **42 tests / 67 assertions** (MemoryStore + FileStore
+The core suite is **43 tests / 72 assertions** (MemoryStore + FileStore
 through the shared contract - each with a real 20-thread race asserting
 exactly one claimant wins, and each proving a binary/non-UTF-8 response body
 round-trips a replay correctly - plus FileStore persistence/corrupt-recovery
 and the middleware). Each optional store runs that *same* `StoreContract`
 against its real backend - **`RedisStore` (16 tests)** against a live
-redis-server and **`ActiveRecordStore` (14 tests)** against ActiveRecord +
+redis-server and **`ActiveRecordStore` (16 tests)** against ActiveRecord +
 SQLite - so all four stores are proven against one contract, not four
 hand-written sets that could drift.
 
